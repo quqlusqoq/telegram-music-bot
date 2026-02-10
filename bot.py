@@ -1,3 +1,4 @@
+import logging
 import asyncio
 import re
 import requests
@@ -10,27 +11,33 @@ from aiogram.filters import CommandStart
 from dotenv import load_dotenv
 import yt_dlp
 
+# Логи (ОЧЕНЬ помогают на Railway)
+logging.basicConfig(level=logging.INFO)
+
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-DOWNLOAD_DIR = Path("downloads")
-DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
+dp.include_router(router)  # Подключаем роутер
 
+DOWNLOAD_DIR = Path("/tmp")  # Railway разрешает запись только во временную папку
+
+
+# ▶ Старт
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     await message.answer("Привет! 👋 Пришли ссылку на YouTube или Spotify — пришлю MP3 🎵")
 
 
+# ▶ Получаем название трека из Spotify страницы
 def get_spotify_title(url: str) -> str | None:
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         html = requests.get(url, headers=headers, timeout=10).text
 
-        title_match = re.search(r'<title>(.*?)</title>', html)
+        title_match = re.search(r"<title>(.*?)</title>", html)
         if not title_match:
             return None
 
@@ -43,8 +50,8 @@ def get_spotify_title(url: str) -> str | None:
         return None
 
 
+# ▶ Скачивание аудио через yt-dlp
 def download_audio(url: str) -> str | None:
-    # Если это Spotify — получаем название трека
     if "spotify.com" in url:
         title = get_spotify_title(url)
         if not title:
@@ -56,9 +63,8 @@ def download_audio(url: str) -> str | None:
         "format": "bestaudio/best",
         "outtmpl": str(DOWNLOAD_DIR / "%(title)s.%(ext)s"),
         "noplaylist": True,
-        "quiet": True,
-        "js_runtimes": {"node": {}},
-        "remote_components": ["ejs:github"],
+        "quiet": False,
+        "nocheckcertificate": True,
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -73,9 +79,6 @@ def download_audio(url: str) -> str | None:
             info = ydl.extract_info(url, download=True)
 
             if "entries" in info:
-                if not info["entries"]:
-                    print("Ничего не найдено на YouTube")
-                    return None
                 info = info["entries"][0]
 
             filename = ydl.prepare_filename(info)
@@ -86,38 +89,37 @@ def download_audio(url: str) -> str | None:
         return None
 
 
+# ▶ Обработка ссылок
 @router.message()
 async def handle_link(message: Message):
     url = message.text.strip()
 
-    if "youtube.com" not in url and "youtu.be" not in url and "spotify.com" not in url:
+    if not any(x in url for x in ["youtube.com", "youtu.be", "spotify.com"]):
         await message.answer("Пришли ссылку на YouTube или Spotify 🎵")
         return
 
-    await message.answer("Скачиваю аудио, подожди ⏳")
+    wait_msg = await message.answer("Скачиваю аудио, подожди ⏳")
 
     try:
-        file_path = download_audio(url)  # скачивание через yt-dlp
+        print(f"Downloading: {url}")
+        file_path = download_audio(url)
 
-        from aiogram.types import FSInputFile  # 👈 ВСТАВИТЬ СЮДА
-        audio = FSInputFile(file_path)         # 👈 И СЮДА
+        if not file_path or not os.path.exists(file_path):
+            await message.answer("Не удалось скачать аудио 😢")
+            return
 
-        await message.answer_audio(            # 👈 ЭТО УЖЕ БЫЛО, но с заменой audio=
-            audio=audio,
-            title=Path(file_path).stem
-        )
+        audio = FSInputFile(file_path)
+        await message.answer_audio(audio=audio, title=Path(file_path).stem)
+
+        os.remove(file_path)
+        await wait_msg.delete()
 
     except Exception as e:
+        print("ERROR:", e)
         await message.answer(f"Ошибка загрузки: {e}")
 
 
-    audio = FSInputFile(file_path)
-    await message.answer_audio(audio=audio, title=Path(file_path).stem)
-
-    os.remove(file_path)
-    await wait_msg.delete()
-
-
+# ▶ Запуск бота
 async def main():
     await dp.start_polling(bot)
 
