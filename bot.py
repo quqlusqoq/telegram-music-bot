@@ -4,7 +4,7 @@ import requests
 import os
 from pathlib import Path
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, FSInputFile
 from aiogram.filters import CommandStart
 from dotenv import load_dotenv
@@ -18,7 +18,7 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
+router = Router()
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
